@@ -28,6 +28,8 @@ from flwr.common import(
 from flwr.server.strategy.aggregate import aggregate, weighted_loss_avg
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
+from logging import INFO, DEBUG
+from flwr.common.logger import log
 import logging
 import copy
 import numpy as np
@@ -39,6 +41,9 @@ from models.ist_utils import (
 
 )
 
+# from ..trainer import train, test
+# from flowerist.trainer import test
+
 class FedIST(fl.server.strategy.Strategy):
     """ Federated training strategy based on independent subnetwork training. """
     def __init__(
@@ -49,6 +54,7 @@ class FedIST(fl.server.strategy.Strategy):
             ist_type: str = "legacy",
             layer_dims: list[int] = None, # used for creating the full network that will be trained
             label_num: int = 10,
+            global_test_data_loader = None,
     ) -> None:
         super().__init__()
         self.num_participants = num_participants
@@ -59,6 +65,8 @@ class FedIST(fl.server.strategy.Strategy):
             layer_dims = [784, 5000] # set default value when not provided
         self.layer_dims = layer_dims
         self.label_num = label_num
+        self.global_test_data_loader = global_test_data_loader
+
         self.track_bn_stats = False
         self.oracle_model = None
         self.model_assignment = None # the last known subnetwork assignments
@@ -80,7 +88,7 @@ class FedIST(fl.server.strategy.Strategy):
         return "FedIST"
     
     def initialize_parameters(
-        self, 
+        self,
         client_manager: ClientManager,
     ) -> Optional[Parameters]:
         """
@@ -125,7 +133,8 @@ class FedIST(fl.server.strategy.Strategy):
         self.model_assignment = [model_partition_ids[i % self.model_partitions] for i in range(self.num_participants)]
         random.shuffle(self.model_assignment)
         self.historical_model_assignments.append(copy.deepcopy(self.model_assignment))
-
+        # print(f"model assignment for round {server_round}: {self.model_assignment}")
+        log(INFO, f"model assignment for round {server_round}: {self.model_assignment}")
         clients = client_manager.sample(
             num_clients=self.num_participants,
             min_num_clients=self.num_participants,
@@ -142,7 +151,8 @@ class FedIST(fl.server.strategy.Strategy):
                 label_num=self.label_num,
                 track_bn_stats=self.track_bn_stats,
             )
-            client_partition_idx = self.model_assignment[idx]
+            client_partition_idx = self.model_assignment[int(client.cid)]
+            # print(f"client {client.cid} assigned to partition {client_partition_idx} based on idx {idx}")
             
             # populate the model subnetwork with parameters from the oracle model
             for j, _ in enumerate(this_client_model.layers):  # for each layer of the child network
@@ -181,8 +191,8 @@ class FedIST(fl.server.strategy.Strategy):
             else:
                 grouped_models[current_model_partition_id].append(current_model_parameters)
 
-        logging.debug("partition ids : {}".format(grouped_models.keys()))
-        
+        # logging.debug("partition ids : {}".format(grouped_models.keys()))
+        log(INFO, f"partition ids : {grouped_models.keys()}")
         for group_part_id, group_model_list in grouped_models.items():
             aggregated_models[group_part_id] = ndarrays_to_parameters(
                 aggregate(
@@ -276,6 +286,11 @@ class FedIST(fl.server.strategy.Strategy):
         self, server_round: int, parameters: Parameters
     ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
         """Evaluate global model parameters using an evaluation function."""
+        # print(f"calling evaluate function for round {server_round}")
+        if self.global_test_data_loader is not None:
+            loss, accuracy = test(self.oracle_model, self.global_test_data_loader)
+            # print(f"Server-side evaluation loss {loss} / accuracy {accuracy}")
+            log(INFO, "Server-side evaluation loss %s / accuracy %s", loss, accuracy)
 
         # Let's assume we won't perform the global model evaluation on the server side.
         return None
@@ -296,5 +311,21 @@ class FedIST(fl.server.strategy.Strategy):
         return copy.deepcopy(state_dict)
 
 # end of fedist.py
+
+def test(net, testloader, device: str = "cpu"):
+    criterion = torch.nn.CrossEntropyLoss()
+    correct, total, loss = 0, 0, 0.0
+    net.eval()
+    with torch.no_grad():
+        for images, labels in testloader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = net(images)
+            loss += criterion(outputs, labels).item()
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    loss /= len(testloader.dataset)
+    accuracy = correct / total
+    return loss, accuracy
 
 

@@ -3,7 +3,7 @@ import torch
 
 def train(net, trainloader, epochs: int, device: str = "cpu"):
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+    optimizer = torch.optim.SGD(net.parameters(), lr=0.01, momentum=0.9)
     net.to(device)
     net.train()
     for epoch in range(epochs):
@@ -21,6 +21,7 @@ def train(net, trainloader, epochs: int, device: str = "cpu"):
             correct += (torch.max(outputs.data, 1)[1] == labels).sum().item()
         epoch_loss /= len(trainloader.dataset)
         epoch_acc = correct / total
+        
         print(f"Epoch {epoch+1}: train loss {epoch_loss}, accuracy {epoch_acc}")
 
 def test(net, testloader, device: str = "cpu"):

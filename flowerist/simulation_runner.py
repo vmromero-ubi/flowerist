@@ -1,3 +1,6 @@
+# import os
+# os.environ["RAY_DEDUP_LOGS"] = "0"
+
 # from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
@@ -14,7 +17,7 @@ from models.ist import IndependentSubNetworks
 from torch.utils.data import DataLoader, random_split, Subset
 from torchvision.datasets import MNIST
 from strategy.fedist import FedIST
-from trainer import test
+# from flowerist.trainer import test
 
 DEVICE = torch.device("cpu")
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,6 +25,8 @@ DEVICE = torch.device("cpu")
 print(f"Training on {DEVICE}")
 
 NUM_CLIENTS = 100
+BATCH_SIZE = 32
+DIRICHLET_ALPHA = 100
 
 def load_datasets(num_clients:int):
     """
@@ -45,7 +50,8 @@ def load_datasets(num_clients:int):
     
     partition_size = len(trainset) // num_clients
     lengths = [partition_size] * num_clients
-    datasets = random_split(trainset, lengths, torch.Generator().manual_seed(42))
+    # datasets = random_split(trainset, lengths, torch.Generator().manual_seed(42))
+    datasets = dirichlet_split(trainset, batch_size=BATCH_SIZE, dirichlet_alpha=DIRICHLET_ALPHA, num_workers=NUM_CLIENTS)
 
     # split each training partition into train/val and create DataLoader
     trainloaders = []
@@ -53,6 +59,9 @@ def load_datasets(num_clients:int):
     for ds in datasets:
         len_val = len(ds) // 10 # corresponds to 10 percent of the training data
         len_train = len(ds) - len_val
+        while (len_val % 32 == 1 or len_train % 32 == 1): # couuld result in infinite loop
+            len_val = len_val + 1
+            len_train = len_train - 1
         lengths = [len_train, len_val]
         ds_train, ds_val = random_split(ds, lengths, torch.Generator().manual_seed(42))   
         trainloaders.append(DataLoader(ds_train, batch_size=32, shuffle=True))
@@ -190,6 +199,7 @@ strategy = FedIST(
     ist_type="legacy",
     layer_dims=LAYER_DIMS,
     label_num=NUM_LABELS,
+    global_test_data_loader=testloader, 
 )
 
 fl.simulation.start_simulation(

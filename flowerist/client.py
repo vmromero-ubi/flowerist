@@ -88,4 +88,4 @@ class FlowerISTClient(fl.client.Client):
             loss=float(loss),
             num_examples=len(self.valloader),
             metrics={"accuracy": float(accuracy)}
-        )   
+        )
